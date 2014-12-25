@@ -5,12 +5,14 @@ It sorts them by priority and gives easy access to the first available connectio
 This is used by the print/save button to give access to the first available print connection.
 As well as listing all printers under the right mouse button.
 """
-__copyright__ = "Copyright (C) 2013 David Braam - Released under terms of the AGPLv3 License"
+__copyright__ = "Copyright (C) 2013 David Braam - Released under terms of the AGPLv3 License\n\
+Copyright (C) 2014 Erwin Rieger for UM2 USB print additions."
 
 from Cura.util import profile
 from Cura.util import version
 from Cura.util.printerConnection import dummyConnection
 from Cura.util.printerConnection import serialConnection
+from Cura.util.printerConnection import um2UsbConnection
 from Cura.util.printerConnection import doodle3dConnect
 
 class PrinterConnectionManager(object):
@@ -23,6 +25,7 @@ class PrinterConnectionManager(object):
 		if version.isDevVersion():
 			self._groupList.append(dummyConnection.dummyConnectionGroup())
 		self._groupList.append(serialConnection.serialConnectionGroup())
+		self._groupList.append(um2UsbConnection.Um2UsbConnectionGroup())
 		self._groupList.append(doodle3dConnect.doodle3dConnectionGroup())
 
 		#Sort the connections by highest priority first.
@@ -30,8 +33,13 @@ class PrinterConnectionManager(object):
 
 	#Return the highest priority available connection.
 	def getAvailableGroup(self):
+
 		if profile.getMachineSetting('gcode_flavor') == 'UltiGCode':
+			for g in self._groupList:
+				if g.ultiGCodeCapable() and len(g.getAvailableConnections()) > 0:
+					return g
 			return None
+
 		for g in self._groupList:
 			if len(g.getAvailableConnections()) > 0:
 				return g

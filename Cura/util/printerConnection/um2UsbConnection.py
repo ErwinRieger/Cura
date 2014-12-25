@@ -14,9 +14,9 @@ import serial
 import ultiprint
 
 from Cura.util import profile
-# from Cura.util import machineCom
 from Cura.util.printerConnection.printerConnectionBase import printerConnectionBase
 from Cura.util.printerConnection.ultiprint import Preprocessor
+from Cura.util.printerConnection.serialConnection import serialConnectionGroup
 
 def isPackedCommand(cmd):
 	return cmd[0] < "\n"

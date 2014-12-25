@@ -160,11 +160,23 @@ class printerConnectionBase(object):
 				self.removeCallback(callback)
 				traceback.print_exc()
 
+	def hasStoreMode(self):
+		"""
+		Return True if this driver can store files on the printer's sd-card
+		"""
+		return False
+
 	def setStoreMode(self, storeMode):
 		"""
 		Set store mode on a Um2USB printer connection.
 		"""
 		pass
+
+	def hasOnIdle(self):
+		"""
+		Return True if this driver uses/needs onIdle gui events.
+		"""
+		return False
 
 	def onIdle(self, ev):
 		"""

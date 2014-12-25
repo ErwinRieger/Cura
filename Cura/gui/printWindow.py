@@ -1,4 +1,5 @@
-__copyright__ = "Copyright (C) 2013 David Braam - Released under terms of the AGPLv3 License"
+__copyright__ = "Copyright (C) 2013 David Braam - Released under terms of the AGPLv3 License\n\
+Copyright (C) 2014 Erwin Rieger for UM2 USB print additions."
 
 import wx
 import power
@@ -333,6 +334,9 @@ class printWindowBasic(wx.Frame):
 
 		self.statsText = wx.StaticText(self.panel, -1, _("InfoLine from printer connection\nInfoLine from dialog\nExtra line\nMore lines for layout\nMore lines for layout\nMore lines for layout"))
 
+		if printerConnection.hasStoreMode():
+			self.storeMode = wx.CheckBox(self.panel, -1, _("Store only mode"))
+
 		self.connectButton = wx.Button(self.panel, -1, _("Connect"))
 		#self.loadButton = wx.Button(self.panel, -1, 'Load')
 		self.printButton = wx.Button(self.panel, -1, _("Print"))
@@ -343,13 +347,17 @@ class printWindowBasic(wx.Frame):
 
 		self.sizer.Add(self.powerWarningText, pos=(0, 0), span=(1, 5), flag=wx.EXPAND|wx.BOTTOM, border=5)
 		self.sizer.Add(self.statsText, pos=(1, 0), span=(1, 5), flag=wx.LEFT, border=5)
-		self.sizer.Add(self.connectButton, pos=(2, 0))
-		#self.sizer.Add(self.loadButton, pos=(2,1))
-		self.sizer.Add(self.printButton, pos=(2, 1))
-		self.sizer.Add(self.pauseButton, pos=(2, 2))
-		self.sizer.Add(self.cancelButton, pos=(2, 3))
-		self.sizer.Add(self.errorLogButton, pos=(2, 4))
-		self.sizer.Add(self.progress, pos=(3, 0), span=(1, 5), flag=wx.EXPAND)
+
+		if printerConnection.hasStoreMode():
+			self.sizer.Add(self.storeMode, pos=(2, 0))
+
+		self.sizer.Add(self.connectButton, pos=(3, 0))
+		#self.sizer.Add(self.loadButton, pos=(3,1))
+		self.sizer.Add(self.printButton, pos=(3, 1))
+		self.sizer.Add(self.pauseButton, pos=(3, 2))
+		self.sizer.Add(self.cancelButton, pos=(3, 3))
+		self.sizer.Add(self.errorLogButton, pos=(3, 4))
+		self.sizer.Add(self.progress, pos=(4, 0), span=(1, 5), flag=wx.EXPAND)
 
 		self.Bind(wx.EVT_CLOSE, self.OnClose)
 		self.connectButton.Bind(wx.EVT_BUTTON, self.OnConnect)
@@ -372,6 +380,9 @@ class printWindowBasic(wx.Frame):
 		if self._printerConnection.hasActiveConnection() and not self._printerConnection.isActiveConnectionOpen():
 			self._printerConnection.openActiveConnection()
 		preventComputerFromSleeping(True)
+
+		if printerConnection.hasOnIdle():
+			wx.EVT_IDLE(self, printerConnection.onIdle)
 
 	def OnPowerWarningChange(self, e):
 		type = self.powerManagement.get_providing_power_source_type()
@@ -405,6 +416,9 @@ class printWindowBasic(wx.Frame):
 		pass
 
 	def OnPrint(self, e):
+
+		if self._printerConnection.hasStoreMode():
+			self._printerConnection.setStoreMode(self.storeMode.IsChecked())
 		self._printerConnection.startPrint()
 
 	def OnCancel(self, e):

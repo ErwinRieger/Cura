@@ -31,3 +31,4 @@ scripts/linux/debian/usr/*
 log.txt
 output.txt
 *.bak
+*.swp

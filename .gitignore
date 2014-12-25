@@ -32,3 +32,5 @@ log.txt
 output.txt
 *.bak
 *.swp
+*.swo
+tags

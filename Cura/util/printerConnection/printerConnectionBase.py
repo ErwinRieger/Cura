@@ -2,7 +2,8 @@
 Base of all printer connections. A printer connection is a way a connection can be made with a printer.
 The connections are based on a group, where each group can have 1 or more connections.
 """
-__copyright__ = "Copyright (C) 2013 David Braam - Released under terms of the AGPLv3 License"
+__copyright__ = "Copyright (C) 2013 David Braam - Released under terms of the AGPLv3 License\n\
+Copyright (C) 2014 Erwin Rieger for UM2 USB print additions."
 
 import traceback
 
@@ -27,6 +28,12 @@ class printerConnectionGroup(object):
 
 	def getPriority(self):
 		return -100
+	
+	def ultiGCodeCapable(self):
+		"""
+		Returns True if this printer understands the UltiGCode flavour.
+		"""
+		return False
 
 	def __cmp__(self, other):
 		return self.getPriority() - other.getPriority()
@@ -152,3 +159,16 @@ class printerConnectionBase(object):
 			except:
 				self.removeCallback(callback)
 				traceback.print_exc()
+
+	def setStoreMode(self, storeMode):
+		"""
+		Set store mode on a Um2USB printer connection.
+		"""
+		pass
+
+	def onIdle(self, ev):
+		"""
+		Called if gui is idle, to perform 'background tasks'
+		"""
+		pass
+

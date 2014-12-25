@@ -1,6 +1,3 @@
-Cura
-====
-
 About this fork
 ===========================
 
@@ -19,9 +16,12 @@ XXX todo: create wiki page and link to it here...
 
 :Note:
 
-Please do NOT post any questions/bugs/issues to the maintainers of the original Cura software. Use this issue-tracker instead: [Issues](https://github.com/ErwinRieger/Cura-USBPrint/issues).
+Please do NOT post any questions/bugs/issues to the maintainers of the original Cura software. Use the issue-tracker instead: [Issues](https://github.com/ErwinRieger/Cura-USBPrint/issues).
 
 The rest of this document is the original Readme from [Cura](https://github.com/daid/Cura).
+
+Cura
+====
 
 Read this, it's important!
 ===========================

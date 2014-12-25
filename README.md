@@ -1,6 +1,28 @@
 Cura
 ====
 
+About this fork
+===========================
+
+This fork adds a *Print Ultimaker2 UltiGCode over USB* functionality to Cura. It is intended to work together with the custom UM2 firmware [Ultimaker2Marlin-USBPrint](https://github.com/ErwinRieger/Ultimaker2Marlin-USBPrint).
+
+Use this Software only if:
+
+    * You have a Ultimaker 2 (UM2) printer
+    * You want to print over USB
+    * You want to use the UltiGCode flavor
+    * You have installed a UM2 firmware from here: [Ultimaker2Marlin-USBPrint](https://github.com/ErwinRieger/Ultimaker2Marlin-USBPrint/releases).
+
+If you prefer a  commandline utility, then look here: [ultiprint.py](https://github.com/ErwinRieger/Ultimaker2Marlin-USBPrint/tree/master/ultiprint).
+
+XXX todo: create wiki page and link to it here...
+
+:Note:
+
+    Please do NOT post any questions/bugs/issues to the maintainers of the original Cura software. Use this issue-tracker instead: [Issues](https://github.com/ErwinRieger/Cura-USBPrint/issues).
+
+The rest of this document is the original Readme from [Cura](https://github.com/daid/Cura).
+
 Read this, it's important!
 ===========================
 

@@ -2,7 +2,8 @@
 The serial/USB printer connection. Uses a 2nd python process to connect to the printer so we never
 have locking problems where other threads in python can block the USB printing.
 """
-__copyright__ = "Copyright (C) 2013 David Braam - Released under terms of the AGPLv3 License"
+__copyright__ = "Copyright (C) 2013 David Braam - Released under terms of the AGPLv3 License\n\
+Copyright (C) 2014 Erwin Rieger for UM2 USB print additions."
 
 import threading
 import time
@@ -21,8 +22,8 @@ class serialConnectionGroup(printerConnectionBase.printerConnectionGroup):
 	The serial connection group. Keeps track of all available serial ports,
 	and builds a serialConnection for each port.
 	"""
-	def __init__(self):
-		super(serialConnectionGroup, self).__init__("USB")
+	def __init__(self, name="USB"):
+		super(serialConnectionGroup, self).__init__(name)
 		self._connectionMap = {}
 
 	def getAvailableConnections(self):
@@ -32,11 +33,17 @@ class serialConnectionGroup(printerConnectionBase.printerConnectionGroup):
 			serialList = [profile.getMachineSetting('serial_port')]
 		for port in serialList:
 			if port not in self._connectionMap:
-				self._connectionMap[port] = serialConnection(port)
+				self._connectionMap[port] = self.createSerialConnection(port)
 		for key in self._connectionMap.keys():
 			if key not in serialList and not self._connectionMap[key].isActiveConnectionOpen():
 				self._connectionMap.pop(key)
 		return self._connectionMap.values()
+
+	def createSerialConnection(self, port):
+		"""
+		Allow child classes to overwrite the used connection class.
+		"""
+		return serialConnection(port)
 
 	def getIconID(self):
 		return 6

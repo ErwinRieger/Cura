@@ -219,9 +219,11 @@ class Um2UsbConnection(printerConnectionBase):
 
 	#Amount of progression of the current print file. 0.0 to 1.0
 	def getPrintProgress(self):
-		if len(self.gcodeData) < 1:
+
+		if not len(self.gcodeData):
 			return 0.0
-		return float(self._printProgress) / float(len(self.gcodeData))
+
+		return float(self.gcodePos) / len(self.gcodeData)
 
 	# Return if the printer with this connection type is available
 	def isAvailable(self):
@@ -247,6 +249,7 @@ class Um2UsbConnection(printerConnectionBase):
 			assert(0)
 
 		if self._serial:
+			self.postMonitor = 0
 			self._serial.close()
 			self._serial = None
 
@@ -259,13 +262,13 @@ class Um2UsbConnection(printerConnectionBase):
 		return False
 
 	def getTemperature(self, extruder):
-		return 245.6;
+		return 0;
 		if extruder >= len(self._temperature):
 			return None
 		return self._temperature[extruder]
 
 	def getBedTemperature(self):
-		return 123.4;
+		return 0;
 		return self._bedTemperature
 
 	#Returns true if we got some kind of error. The getErrorLog returns all the information to diagnose the problem.
@@ -331,11 +334,11 @@ class Um2UsbConnection(printerConnectionBase):
 		if not self.printing and time.time() > self.postMonitor:
 			return
 
-		if time.time() <  self.postMonitor: 
-			print "postmon: ", self.wantAck, self.wantReply, self.gcodePos
+		# if time.time() <  self.postMonitor: 
+			# print "postmon: ", self.wantAck, self.wantReply, self.gcodePos
 		
-		if self.printing:
-			print "print: ", self.wantAck, self.wantReply, self.gcodePos
+		# if self.printing:
+			# print "print: ", self.wantAck, self.wantReply, self.gcodePos
 
 		if self.printing and not self.wantAck and not self.wantReply and self.gcodePos < len(self.gcodeData):
 			# send a line
@@ -344,6 +347,11 @@ class Um2UsbConnection(printerConnectionBase):
 			self.gcodePos += 1
 			self.lastSend = time.time()
 			self.wantAck = True
+
+			# Update gui
+			if (self.gcodePos % 250) == 0:
+				duration = time.time() - self.startTime
+				self.showMessage("Downloaded %d/%d gcodes, %.1f gcodes/sec" % (self.gcodePos, len(self.gcodeData), self.gcodePos/duration))
 
 			# We have sent a command to the printer, request more
 			# cpu cycles from wx to process the answer quickly
@@ -390,6 +398,7 @@ class Um2UsbConnection(printerConnectionBase):
 			print "-----------------------------------------------\n"
 			duration = time.time() - self.startTime
 			print "Sent %d commands in %.1f seconds, %.1f commands/second.\n" % (len(self.gcodeData), duration, len(self.gcodeData)/duration)
+			self.showMessage("GCode download done - Please wait for the print to finish.")
 
 		for token in self.endTokens:
 			if recvLine.startswith(token):

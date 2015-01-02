@@ -6,30 +6,30 @@
 
 #
 # Acknowledge of a usb transmission from printer:
-#	One byte, Ascii-ACK (0x6)
+#   One byte, Ascii-ACK (0x6)
 #
 #
 # Compression:
 #
 # N5860 G1 F3000 X153.16 Y123.17 Z38.80 E459.21186*62 -> 51 bytes
 # 
-# 1 byte:			 command key, 1-9
-# 1 byte:			 'parameter mask', bits: FXYZES00 (2 unused bytes)
-# 2 byte:			 F param
-# 4 byte:			 X param
-# 4 byte:			 Y param
-# 4 byte:			 Z param
-# 4 byte:			 E param
-# 4 byte:			 2 or 4byte line counter, am schluss, damit einfach abzuschneiden
-# 1 byte:			 checksum
+# 1 byte:            command key, 1-9
+# 1 byte:            'parameter mask', bits: FXYZES00 (2 unused bytes)
+# 2 byte:            F param
+# 4 byte:            X param
+# 4 byte:            Y param
+# 4 byte:            Z param
+# 4 byte:            E param
+# 4 byte:            2 or 4byte line counter, am schluss, damit einfach abzuschneiden
+# 1 byte:            checksum
 # 
 # 
 # Kompressed command keys:
 # 
-#	G0:	 1	 # xxx could be compressed as G1/2, see Marlin_main.cpp
-#	G1:	 2
-#	G10: 3
-#	G11: 4
+#   G0:  1   # xxx could be compressed as G1/2, see Marlin_main.cpp
+#   G1:  2
+#   G10: 3
+#   G11: 4
 # 
 
 
@@ -40,521 +40,545 @@ from serial import Serial, SerialException, PARITY_NONE
 
 class Preprocessor:
 
-	def __init__(self, mode, filename=None, gcode=[], stream=None):
+    def __init__(self, mode, filename=None, gcode=[], stream=None):
+
+        self.lineNr = 0
+        self.origbytes = 0
+        self.packbytes = 0
+        self.uncompressedCmds = collections.defaultdict(int)
+
+        # Always reset line counter first
+        gcode = [("M110", "ok")] + gcode
 
-		self.lineNr = 0
-		self.origbytes = 0
-		self.packbytes = 0
-		self.uncompressedCmds = collections.defaultdict(int)
+        if filename or stream:
 
-		# Always reset line counter first
-		gcode = [("M110", "ok")] + gcode
+            # If in printing mode, then send custom M623 command,
+            # select file for UM2 print
+            if mode == "print":
+                gcode += [("M623 usb.g", "ok")]
 
-		if filename or stream:
+            # Store or print mode, open the file on the
+            # SD card with the M28 command, then send the
+            # contents of the file given on the commandline.
+            # Close file on SD card with M29 if done.
+            gcode += [("M28 usb.g", "ok")]
 
-			# If in printing mode, then send custom M623 command,
-			# select file for UM2 print
-			if mode == "print":
-				gcode += [("M623 usb.g", "ok")]
+            if filename:
+                inFile = open(filename)
 
-			# Store or print mode, open the file on the
-			# SD card with the M28 command, then send the
-			# contents of the file given on the commandline.
-			# Close file on SD card with M29 if done.
-			gcode += [("M28 usb.g", "ok")]
+                print "Preprocessing:", filename
+                sys.stdout.flush()
 
-			if filename:
-				inFile = open(filename)
+                for line in inFile.readlines():
+    
+                    # Strip very long lines like ";CURA_PROFILE_STRING" line at the end of the file:
+                    # Marlin: #define MAX_CMD_SIZE 96
+                    if len(line) > 80:
+                        continue
+
+                    gcode.append((line, None))
+
+            if filename:
+                inFile.close()
+            else:
+                
+                print "Preprocessing:", stream
+
+                for line in stream:
+
+                    # Strip very long lines like ";CURA_PROFILE_STRING" line at the end of the file:
+                    # Marlin: #define MAX_CMD_SIZE 96
+                    if len(line) > 80:
+                        continue
+
+                    gcode.append((line, None))
+
+            gcode.append(("M29", Printer.endStoreToken))
+
+        self.prep = self.preprocessGCode(gcode)
+
+        # debug
+        """
+        if mode == "pre":
+            print "saving to /tmp/usb.g"
+            f = open("/tmp/usb.g", "w")
+            lnr = 0
+            for (cmd, resp) in self.prep:
+                if isPackedCommand(cmd):
+                    if lnr < 0x10000:
+                        f.writelines(cmd[:-4] + "\n")
+                    else:
+                        f.writelines(cmd[:-6] + "\n")
+                else:
+                    n = cmd.split()[0]
+                    c = cmd.split("*")[-1]
+                    f.writelines(cmd[len(n)+1:-(len(c)+1)] + "\n")
+                lnr += 1
+            f.close()
+        """
+
+    def printStat(self):
+        print "\n-----------------------------------------------"
+        print "Preprocessor statistics:"
+        print "-----------------------------------------------\n"
+        print "Size of unpacked commands: %d bytes" % self.origbytes
+        print "Size of   packed commands: %d bytes" % self.packbytes
+        print "Compression ratio: %.1f%%" % (self.packbytes*100.0/self.origbytes)
+
+        print "# Uncompressed commands: "
+        for cmd in self.uncompressedCmds:
+            print "%-10s: %5d" % (cmd, self.uncompressedCmds[cmd])
+
+
+    # Create gcode checksum, this is stolen from
+    # printrun/printcore.py ;-)
+    def checksum(self, command):
+        return reduce(lambda x, y: x ^ y, map(ord, command))
+
+    def packGCode(self, code, lineNr):
+
+        # Note: Arduino is little endian
+
+        splitted = code.split()
+
+        cmd = splitted[0]
 
-				print "Preprocessing:", filename
-				sys.stdout.flush()
+        paramFlags = 0
 
-				for line in inFile.readlines():
+        if cmd == "G0" or cmd == "G1":
 
-					# Strip very long lines like ";CURA_PROFILE_STRING" line at the end of the file:
-					# Marlin: #define MAX_CMD_SIZE 96
-					if len(line) > 80:
-						continue
+            assert(len(splitted) <= 6)
 
-					gcode.append((line, None))
+            cmdHex = 1
+            if cmd == "G1":
+                cmdHex = 2
 
-				if filename:
-					inFile.close()
-			else:
+            fHex = None
+            xHex = None
+            yHex = None
+            zHex = None
+            eHex = None
 
-				print "Preprocessing:", stream
+            for param in splitted[1:]:
 
-				for line in stream:
+                paramType = param[0]
 
-					# Strip very long lines like ";CURA_PROFILE_STRING" line at the end of the file:
-					# Marlin: #define MAX_CMD_SIZE 96
-					if len(line) > 80:
-						continue
+                if paramType == "F":
+                    paramFlags += 1 << 7
+                    sp = int(param[1:])
+                    assert((sp > 0) and (sp < pow(2,16)))
+                    fHex = struct.pack("<H", sp)
+                    
+                elif paramType == "X":
+                    paramFlags += 1 << 6
+                    fp = float(param[1:])
+                    xHex = struct.pack("<f", fp)
 
-					gcode.append((line, None))
+                elif paramType == "Y":
+                    paramFlags += 1 << 5
+                    fp = float(param[1:])
+                    yHex = struct.pack("<f", fp)
 
-			gcode.append(("M29", Printer.endStoreToken))
+                elif paramType == "Z":
+                    paramFlags += 1 << 4
+                    fp = float(param[1:])
+                    zHex = struct.pack("<f", fp)
 
-		self.prep = self.preprocessGCode(gcode)
+                elif paramType == "E":
+                    paramFlags += 1 << 3
+                    fp = float(param[1:])
+                    eHex = struct.pack("<f", fp)
 
-		# debug
-		"""
-		if mode == "pre":
-			print "saving to /tmp/usb.g"
-			f = open("/tmp/usb.g", "w")
-			lnr = 0
-			for (cmd, resp) in self.prep:
-				if isPackedCommand(cmd):
-					if lnr < 0x10000:
-						f.writelines(cmd[:-4] + "\n")
-					else:
-						f.writelines(cmd[:-6] + "\n")
-				else:
-					n = cmd.split()[0]
-					c = cmd.split("*")[-1]
-					f.writelines(cmd[len(n)+1:-(len(c)+1)] + "\n")
-				lnr += 1
-			f.close()
-		"""
-
-	def printStat(self):
-		print "\n-----------------------------------------------"
-		print "Preprocessor statistics:"
-		print "-----------------------------------------------\n"
-		print "Size of unpacked commands: %d bytes" % self.origbytes
-		print "Size of	 packed commands: %d bytes" % self.packbytes
-		print "Compression ratio: %.1f%%" % (self.packbytes*100.0/self.origbytes)
+                else:
+                    assert(0)
 
-		print "# Uncompressed commands: "
-		for cmd in self.uncompressedCmds:
-			print "%-10s: %5d" % (cmd, self.uncompressedCmds[cmd])
+            lnHex = struct.pack("<I", lineNr)
+            if lineNr < 0x10000:
+                # pack line number as short
+                paramFlags += 1 << 2
+                lnHex = struct.pack("<H", lineNr)
 
+            packed = struct.pack("<BB", cmdHex, paramFlags)
 
-	# Create gcode checksum, this is stolen from
-	# printrun/printcore.py ;-)
-	def checksum(self, command):
-		return reduce(lambda x, y: x ^ y, map(ord, command))
+            if fHex:
+                packed += fHex
+            if xHex:
+                packed += xHex
+            if yHex:
+                packed += yHex
+            if zHex:
+                packed += zHex
+            if eHex:
+                packed += eHex
 
-	def packGCode(self, code, lineNr):
+            # add number and checksum
+            packed += lnHex
 
-		# Note: Arduino is little endian
+            chk = self.checksum(packed)
+            packed += struct.pack("<B", chk)
 
-		splitted = code.split()
+            return packed + "\n"
 
-		cmd = splitted[0]
+        if cmd == "G10" or cmd == "G11":
 
-		paramFlags = 0
+            assert(len(splitted) == 1)
 
-		if cmd == "G0" or cmd == "G1":
+            cmdHex = 3
+            if cmd == "G11":
+                cmdHex = 4
 
-			assert(len(splitted) <= 6)
+            lnHex = struct.pack("<I", lineNr)
+            if lineNr < 0x10000:
+                # pack line number as short
+                paramFlags += 1 << 2
+                lnHex = struct.pack("<H", lineNr)
 
-			cmdHex = 1
-			if cmd == "G1":
-				cmdHex = 2
+            packed = struct.pack("<BB", cmdHex, paramFlags)
 
-			fHex = None
-			xHex = None
-			yHex = None
-			zHex = None
-			eHex = None
+            # add number and checksum
+            packed += lnHex
 
-			for param in splitted[1:]:
+            chk = self.checksum(packed)
+            packed += struct.pack("<B", chk)
 
-				paramType = param[0]
+            return packed + "\n"
 
-				if paramType == "F":
-					paramFlags += 1 << 7
-					sp = int(param[1:])
-					assert((sp > 0) and (sp < pow(2,16)))
-					fHex = struct.pack("<H", sp)
-					
-				elif paramType == "X":
-					paramFlags += 1 << 6
-					fp = float(param[1:])
-					xHex = struct.pack("<f", fp)
+    def preprocessGCode(self, gcode):
 
-				elif paramType == "Y":
-					paramFlags += 1 << 5
-					fp = float(param[1:])
-					yHex = struct.pack("<f", fp)
+        print "Preprocessing %d gcode lines..." % len(gcode)
 
-				elif paramType == "Z":
-					paramFlags += 1 << 4
-					fp = float(param[1:])
-					zHex = struct.pack("<f", fp)
+        prep = []
 
-				elif paramType == "E":
-					paramFlags += 1 << 3
-					fp = float(param[1:])
-					eHex = struct.pack("<f", fp)
+        for (cmd, response) in gcode:
 
-				else:
-					assert(0)
+            scmd = cmd.strip()
 
-			lnHex = struct.pack("<I", lineNr)
-			if lineNr < 0x10000:
-				# pack line number as short
-				paramFlags += 1 << 2
-				lnHex = struct.pack("<H", lineNr)
+            if not scmd:
+                # skip empty lines
+                continue
 
-			packed = struct.pack("<BB", cmdHex, paramFlags)
+            if scmd == "M110":
+                self.lineNr = 0
 
-			if fHex:
-				packed += fHex
-			if xHex:
-				packed += xHex
-			if yHex:
-				packed += yHex
-			if zHex:
-				packed += zHex
-			if eHex:
-				packed += eHex
+            prefix = "N" + str(self.lineNr) + " " + scmd
+            chksm = self.checksum(prefix)
 
-			# add number and checksum
-			packed += lnHex
+            # print scmd
 
-			chk = self.checksum(packed)
-			packed += struct.pack("<B", chk)
+            # Len of uncompressed command:
+            #
+            # + 1, "N"
+            # + len("%d" % lineNr), linenumber
+            # + 1, blank after linenumber
+            # + len(cmd) 
+            # + 1 + len(chksum), *<checksum>
+            # + 1, newline
+            #
+            origlen = 1 + len("%d" % self.lineNr) + 1 + len(scmd) + 1 + len("%d" % chksm) + 1
+            self.origbytes += origlen
 
-			return packed + "\n"
+            packed = self.packGCode(scmd, self.lineNr)
 
-		if cmd == "G10" or cmd == "G11":
+            if packed:
 
-			assert(len(splitted) == 1)
+                self.packbytes += len(packed)
 
-			cmdHex = 3
-			if cmd == "G11":
-				cmdHex = 4
+                prep.append( ( packed, response ) )
+            else:
 
-			lnHex = struct.pack("<I", lineNr)
-			if lineNr < 0x10000:
-				# pack line number as short
-				paramFlags += 1 << 2
-				lnHex = struct.pack("<H", lineNr)
+                self.packbytes += origlen
 
-			packed = struct.pack("<BB", cmdHex, paramFlags)
+                if scmd[0] == ";":
+                    self.uncompressedCmds["<comment>"] += 1
+                else:
+                    self.uncompressedCmds[scmd.split()[0]] += 1
 
-			# add number and checksum
-			packed += lnHex
+                scmd = prefix + "*" + str(chksm) + "\n"
 
-			chk = self.checksum(packed)
-			packed += struct.pack("<B", chk)
+                # print "ll: ", len(scmd),  origlen
+                # print "'%s'" % scmd
+                assert(len(scmd) == origlen) # +1 is for newline
 
-			return packed + "\n"
+                prep.append( ( scmd, response ) )
 
-	def preprocessGCode(self, gcode):
+            self.lineNr += 1
 
-		print "Preprocessing %d gcode lines..." % len(gcode)
-
-		prep = []
-
-		for (cmd, response) in gcode:
-
-			scmd = cmd.strip()
-
-			if not scmd:
-				# skip empty lines
-				continue
-
-			if scmd == "M110":
-				self.lineNr = 0
-
-			prefix = "N" + str(self.lineNr) + " " + scmd
-			chksm = self.checksum(prefix)
-
-			# print scmd
-
-			# Len of uncompressed command:
-			#
-			# + 1, "N"
-			# + len("%d" % lineNr), linenumber
-			# + 1, blank after linenumber
-			# + len(cmd) 
-			# + 1 + len(chksum), *<checksum>
-			# + 1, newline
-			#
-			origlen = 1 + len("%d" % self.lineNr) + 1 + len(scmd) + 1 + len("%d" % chksm) + 1
-			self.origbytes += origlen
-
-			packed = self.packGCode(scmd, self.lineNr)
-
-			if packed:
-
-				self.packbytes += len(packed)
-
-				prep.append( ( packed, response ) )
-			else:
-
-				self.packbytes += origlen
-
-				if scmd[0] == ";":
-					self.uncompressedCmds["<comment>"] += 1
-				else:
-					self.uncompressedCmds[scmd.split()[0]] += 1
-
-				scmd = prefix + "*" + str(chksm) + "\n"
-
-				# print "ll: ", len(scmd),	origlen
-				# print "'%s'" % scmd
-				assert(len(scmd) == origlen) # +1 is for newline
-
-				prep.append( ( scmd, response ) )
-
-			self.lineNr += 1
-
-		print "done..."
-		return prep
+        print "done..."
+        return prep
 
 def isPackedCommand(cmd):
-	return cmd[0] < "\n"
+    return cmd[0] < "\n"
+
+
+class SERIALDISCON(SerialException):
+    pass
 
 class Printer(Serial):
 
-	endStoreToken = "Done saving"
+    endStoreToken = "Done saving"
+    # Number of rx errors till we assume the
+    # line is dead.
+    maxRXErrors = 50
 
-	def __init__(self, device, mode):
-		Serial.__init__(
-			self,
-			port = device,
-			# baudrate = 250000,
-			# baudrate = 38400,
-			baudrate = 115200,
-			timeout = 0, parity = PARITY_NONE)
+    def __init__(self, device, mode):
+        Serial.__init__(
+            self,
+            port = device,
+            # baudrate = 250000,
+            # baudrate = 38400,
+            baudrate = 115200,
+            timeout = 0, parity = PARITY_NONE)
 
-		if mode == "print":
-			# self.endTokens = ["Done printing", 'echo:enqueing "M84"']	  
-			self.endTokens = ['echo:enqueing "M84"']   
-		else:
-			self.endTokens = [self.endStoreToken, 'echo:enqueing "M84"']
+        if mode == "print":
+            # self.endTokens = ["Done printing", 'echo:enqueing "M84"']   
+            self.endTokens = ['echo:enqueing "M84"']   
+        else:
+            self.endTokens = [self.endStoreToken, 'echo:enqueing "M84"']
 
-		self.mode = mode
-		self.cmdIndex = 0
-		self.lastSend = 0
+        self.mode = mode
+        self.cmdIndex = 0
+        self.lastSend = 0
 
-	# Check a printer response for an error
-	def checkError(self, recvLine):
+        # Retry counter on rx errors
+        self.rxErrors = 0
 
-		if "Error:" in recvLine and	 "Last Line" in recvLine:
-			# Error:Line Number is not Last Line Number+1, Last Line: 9			   
-			# Error:checksum mismatch, Last Line: 71388
-			lastLine = int(recvLine.split(":")[2])
+    # Check a printer response for an error
+    def checkError(self, recvLine):
 
-			print "\nERROR:"
-			print "Reply: ", recvLine,
-			print "Scheduling resend of command...", lastLine+1
+        if "Error:" in recvLine and  "Last Line" in recvLine:
+            # Error:Line Number is not Last Line Number+1, Last Line: 9            
+            # Error:checksum mismatch, Last Line: 71388
+            lastLine = int(recvLine.split(":")[2])
 
-			# assert(self.cmdIndex == lastLine + 2)
+            print "\nERROR:"
+            print "Reply: ", recvLine,
+            print "Scheduling resend of command:", lastLine+1
 
-			self.cmdIndex = lastLine + 1
+            # assert(self.cmdIndex == lastLine + 2)
 
-			# Slow down a bit in case of error
-			time.sleep(0.1)
-			return True
+            self.cmdIndex = lastLine + 1
 
-		for token in ["Error:", "cold extrusion", "SD init fail", "open failed"]:
-			if token in recvLine:
+            # Wait 0.1 sec, give firmware time to drain buffers
+            time.sleep(0.5)
+            return True
 
-				print "\nERROR:"
-				print "Reply: ", recvLine,
-				sys.stdout.flush()
-				self.readMore(20)
+        for token in ["Error:", "cold extrusion", "SD init fail", "open failed"]:
+            if token in recvLine:
 
-				self.reset()
+                print "\nERROR:"
+                print "Reply: ", recvLine,
+                sys.stdout.flush()
+                self.readMore(20)
 
-				print "\n\nPrinter reset done, bailing out...\n\n"
-				assert(0)
+                self.reset()
 
-	# Read a response from printer, "handle" exceptions
-	def saveReadline(self):
+                print "\n\nPrinter reset done, bailing out...\n\n"
+                assert(0)
 
-		result = ""
+    # Read a response from printer, "handle" exceptions
+    def safeReadline(self):
 
-		while True:
-			try:
-				c = self.read()
-				# print "c: ", c
-			except SerialException as ex:
-				print "Readline() Exception raised:", ex
-				break
+        result = ""
 
-			if not c:
-				break
+        while True:
+            try:
+                c = self.read()
+                # print "c: ", c
+            except SerialException as ex:
+                if self.rxErrors < 5:
+                    print "Readline() Exception raised:", ex
 
-			result += c
+                self.rxErrors += 1
 
-			if c == "\n":
-				break
+                if self.rxErrors >= Printer.maxRXErrors:
+                    print "declare line is dead ..."
+                    raise SERIALDISCON
 
-			if ord(c) == 0x6:
-				result += "\n"
-				break
+                time.sleep(0.1)
+                break
 
-		return result
+            if not c:
+                break
 
-	# Monitor printer responses for a while (wait waitcount * 0.1 seconds)
-	def readMore(self, waitcount=100):
+            # Received something, reset error counter
+            self.rxErrors = 0
 
-		print "waiting %.2f seconds for more messages..." % (waitcount/10.0)
-		sys.stdout.flush()
+            result += c
 
-		for i in range(waitcount):
+            if c == "\n":
+                break
 
-			readable, writable, exceptional = select.select([self], [], [], 0.1)
+            if ord(c) == 0x6:
+                result += "\n"
+                break
 
-			if exceptional:
-				print "exception on select: ", exceptional
-				self.reset()
-				print "\n\nPrinter reset done, bailing out...\n\n"
-				assert(0)
+        return result
 
-			if readable:
-				recvLine = self.saveReadline()		  
+    # Monitor printer responses for a while (wait waitcount * 0.1 seconds)
+    def readMore(self, waitcount=100):
 
-				assert(recvLine)
+        print "waiting %.2f seconds for more messages..." % (waitcount/10.0)
+        sys.stdout.flush()
 
-				if recvLine:
-					if ord(recvLine[0]) > 20:
-						print "Reply: ", recvLine,
-					else:
-						print "Reply: 0x%s" % recvLine.encode("hex")
-					sys.stdout.flush()
+        for i in range(waitcount):
 
-	# Stop and reset the printer
-	def reset(self):
+            readable, writable, exceptional = select.select([self], [], [], 0.1)
 
-		print "\nResetting printer"
+            if exceptional:
+                print "exception on select: ", exceptional
 
-		# self._send("M29\n") # End sd write, response: "Done saving"
-		# self._send("G28\n") # Home all Axis, response: ok
-		# self._send("M84\n") # Disable steppers until next move, response: ok
-		# self._send("M104 S0\n") # Set temp
-		# self._send("M140 S0\n") # Set temp
+            if readable:
+                try:
+                    recvLine = self.safeReadline()        
+                except SERIALDISCON:
+                    print "Line disconnected in readMore"
+                    return
 
-		gcode = ["M29", "G28", "M84", "M104 S0", "M140 S0"]
-		prep = Preprocessor("reset", gcode = map(lambda x: (x, None), gcode))
+                if recvLine:
+                    if ord(recvLine[0]) > 20:
+                        print "Reply: ", recvLine,
+                    else:
+                        print "Reply: 0x%s" % recvLine.encode("hex")
+                    sys.stdout.flush()
 
-		print "Reset code sequence: ", prep.prep
+    # Stop and reset the printer
+    def reset(self):
 
-		self.readMore(50)
+        print "\nResetting printer"
 
-		for (cmd, resp) in prep.prep:
-			self.send(cmd)
-			self.readMore(25)
+        # self._send("M29\n") # End sd write, response: "Done saving"
+        # self._send("G28\n") # Home all Axis, response: ok
+        # self._send("M84\n") # Disable steppers until next move, response: ok
+        # self._send("M104 S0\n") # Set temp
+        # self._send("M140 S0\n") # Set temp
 
-	# Send a command to the printer, add a newline if 
-	# needed.
-	def send(self, cmd):
+        gcode = ["M29", "G28", "M84", "M104 S0", "M140 S0"]
+        prep = Preprocessor("reset", gcode = map(lambda x: (x, None), gcode))
 
-		assert(cmd[-1] == "\n")
+        print "Reset code sequence: ", prep.prep
 
-		if isPackedCommand(cmd):
-		
-			print "\nSend: ", cmd.encode("hex")
-			sys.stdout.flush()
-			self._send(cmd)
-		else:
+        for (cmd, resp) in prep.prep:
+            self.send(cmd)
+            self.readMore(5)
 
-			print "\nSend: ", cmd,
-			sys.stdout.flush()
-			self._send(cmd)
+        self.readMore(50)
 
-	# Send a command to the printer
-	def _send(self, cmd):
+    # Send a command to the printer, add a newline if 
+    # needed.
+    def send(self, cmd):
 
-		self.write(cmd)
+        assert(cmd[-1] == "\n")
 
+        if isPackedCommand(cmd):
+        
+            print "\nSend: ", cmd.encode("hex")
+            sys.stdout.flush()
+            self._send(cmd)
+        else:
 
-	# The 'mainloop' process each command in the list 'gcode', check
-	# for the required responses and do errorhandling.
-	def sendGcode(self, gcode, wantReply=None, waitForEndReply=True):
+            print "\nSend: ", cmd,
+            sys.stdout.flush()
+            self._send(cmd)
 
-		startTime = time.time()
+    # Send a command to the printer
+    def _send(self, cmd):
 
-		self.cmdIndex = 0
+        self.write(cmd)
 
-		recvPart = None
 
-		wantAck = False
+    # The 'mainloop' process each command in the list 'gcode', check
+    # for the required responses and do errorhandling.
+    def sendGcode(self, gcode, wantReply=None, waitForEndReply=True):
 
-		while True:
+        startTime = time.time()
 
-			if not wantAck and not wantReply and self.mode != "mon" and self.cmdIndex < len(gcode):
-				# send a line
-				(line, wantReply) = gcode[self.cmdIndex]
-				self.send(line)
-				self.cmdIndex += 1
-				self.lastSend = time.time()
-				wantAck = True
+        self.cmdIndex = 0
 
-			readable, writable, exceptional = select.select([self], [], [])
+        recvPart = None
 
-			if exceptional:
-				print "exception on select: ", exceptional
-				self.reset()
-				print "\n\nPrinter reset done, bailing out...\n\n"
-				assert(0)
+        wantAck = False
 
-			recvLine = self.saveReadline()		  
+        while True:
 
-			if not recvLine:
-				continue
+            if not wantAck and not wantReply and self.mode != "mon" and self.cmdIndex < len(gcode):
+                # send a line
+                (line, wantReply) = gcode[self.cmdIndex]
+                self.send(line)
+                self.cmdIndex += 1
+                self.lastSend = time.time()
+                wantAck = True
 
-			# print "R0:", ord(recvLine[0])
+            readable, writable, exceptional = select.select([self], [], [], 0.1)
 
-			if recvPart:
-				recvLine = recvPart + recvLine
-				recvPart = None
+            if exceptional:
+                print "exception on select: ", exceptional
+                self.reset()
+                print "\n\nPrinter reset done, bailing out...\n\n"
+                assert(0)
 
-			if recvLine[-1] != "\n":
-				recvPart = recvLine
-				continue
+            if not readable:
+                continue
 
-			if self.mode != "mon" and self.checkError(recvLine):
-				# command resend
-				wantAck = False
-				wantReply = None
-				continue
+            recvLine = self.safeReadline()        
 
-			if wantAck and recvLine[0] == chr(0x6):
-				print "ACK"
-				wantAck = False
-				sys.stdout.flush()
-				continue
+            if not recvLine:
+                continue
 
-			if wantReply and recvLine.startswith(wantReply):
-				print "Got Required reply: ", recvLine,
-				wantReply = None
-			else:
-				print "Reply: ", recvLine,
+            # print "R0:", ord(recvLine[0])
 
-			if recvLine.startswith(self.endStoreToken):
-				print "\n-----------------------------------------------"
-				print "Store statistics:"
-				print "-----------------------------------------------\n"
-				duration = time.time() - startTime
-				print "Sent %d commands in %.1f seconds, %.1f commands/second.\n" % (len(gcode), duration, len(gcode)/duration)
+            if recvPart:
+                recvLine = recvPart + recvLine
+                recvPart = None
 
-			sys.stdout.flush()
+            if recvLine[-1] != "\n":
+                recvPart = recvLine
+                continue
 
-			if waitForEndReply:
-				for token in self.endTokens:
-					if recvLine.startswith(token):
+            if self.mode != "mon" and self.checkError(recvLine):
+                # command resend
+                wantAck = False
+                wantReply = None
+                continue
 
-						sys.stdout.flush()
-						self.readMore()
+            if wantAck and recvLine[0] == chr(0x6):
+                print "ACK"
+                wantAck = False
+                sys.stdout.flush()
+                continue
 
-						print "end-reply received, exiting..."
-						sys.stdout.flush()
-						return
+            if wantReply and recvLine.startswith(wantReply):
+                print "Got Required reply: ", recvLine,
+                wantReply = None
+            else:
+                print "Reply: ", recvLine,
 
-			elif not wantReply and self.cmdIndex == len(gcode):
+            if recvLine.startswith(self.endStoreToken):
+                print "\n-----------------------------------------------"
+                print "Store statistics:"
+                print "-----------------------------------------------\n"
+                duration = time.time() - startTime
+                print "Sent %d commands in %.1f seconds, %.1f commands/second.\n" % (len(gcode), duration, len(gcode)/duration)
 
-				print "\nsent %d commands,	exiting..." % len(gcode)
-				sys.stdout.flush()
+            sys.stdout.flush()
 
-				self.readMore()
-				return
+            if waitForEndReply:
+                for token in self.endTokens:
+                    if recvLine.startswith(token):
+
+                        sys.stdout.flush()
+                        self.readMore()
+
+                        print "end-reply received, exiting..."
+                        sys.stdout.flush()
+                        return
+
+            elif not wantReply and self.cmdIndex == len(gcode):
+
+                print "\nsent %d commands,  exiting..." % len(gcode)
+                sys.stdout.flush()
+
+                self.readMore()
+                return
 
 
 
@@ -565,62 +589,67 @@ class Printer(Serial):
 #
 if __name__ == "__main__":
 
-	parser = argparse.ArgumentParser(description='UltiPrint, print on UM2 over USB.')
-	parser.add_argument("-d", dest="device", action="store", type=str, help="Device to use, default: /dev/ttyACM0.", default="/dev/ttyACM0")
+    parser = argparse.ArgumentParser(description='UltiPrint, print on UM2 over USB.')
+    parser.add_argument("-d", dest="device", action="store", type=str, help="Device to use, default: /dev/ttyACM0.", default="/dev/ttyACM0")
 
-	subparsers = parser.add_subparsers(dest="mode", help='Mode: mon(itor)|print|store|reset|pre(process).')
+    subparsers = parser.add_subparsers(dest="mode", help='Mode: mon(itor)|print|store|reset|pre(process).')
 
-	sp = subparsers.add_parser("mon", help=u"Monitor printer.")
+    sp = subparsers.add_parser("mon", help=u"Monitor printer.")
 
-	sp = subparsers.add_parser("print", help=u"Print file.")
-	sp.add_argument("gfile", help="Input GCode file.")
+    sp = subparsers.add_parser("print", help=u"Print file.")
+    sp.add_argument("gfile", help="Input GCode file.")
 
-	sp = subparsers.add_parser("store", help=u"Store file as USB.G on sd-card.")
-	sp.add_argument("gfile", help="Input GCode file.")
+    sp = subparsers.add_parser("store", help=u"Store file as USB.G on sd-card.")
+    sp.add_argument("gfile", help="Input GCode file.")
 
-	sp = subparsers.add_parser("reset", help=u"Try to stop/reset printer.")
+    sp = subparsers.add_parser("reset", help=u"Try to stop/reset printer.")
 
-	sp = subparsers.add_parser("pre", help=u"Preprocess gcode, for debugging purpose.")
-	sp.add_argument("gfile", help="Input GCode file.")
+    sp = subparsers.add_parser("pre", help=u"Preprocess gcode, for debugging purpose.")
+    sp.add_argument("gfile", help="Input GCode file.")
 
-	args = parser.parse_args()
-	# print "args: ", args
+    args = parser.parse_args()
+    # print "args: ", args
 
-	if args.mode == 'pre':
-		#
-		# Preprocess only
-		#
-		prep = Preprocessor(args.mode, args.gfile)
-		prep.printStat();
-		sys.exit(0)
+    if args.mode == 'pre':
+        #
+        # Preprocess only
+        #
+        prep = Preprocessor(args.mode, args.gfile)
+        prep.printStat();
+        sys.exit(0)
 
-	printer = Printer(args.device, args.mode)
+    printer = Printer(args.device, args.mode)
 
-	# Read left over garbage
-	recvLine = printer.saveReadline()		 
-	print "Initial read: "
-	print recvLine.encode("hex"), "\n"
+    # Read left over garbage
+    recvLine = printer.safeReadline()        
+    print "Initial read: "
+    print recvLine.encode("hex"), "\n"
 
-	if args.mode == "reset":
-		#
-		# Reset printer
-		#
-		printer.reset()
-		sys.exit(0)
+    if args.mode == "reset":
+        #
+        # Reset printer
+        #
+        printer.reset()
+        sys.exit(0)
 
-	if args.mode == "mon":
-		#
-		# Monitor printer output
-		#
-		printer.sendGcode([], "echo:SD card ok")
-		sys.exit(0)
+    if args.mode == "mon":
+        #
+        # Monitor printer output
+        #
+        printer.sendGcode([], "echo:SD card ok")
+        sys.exit(0)
 
 
-	prep = Preprocessor(args.mode, args.gfile)
-	printer.sendGcode(prep.prep, "echo:SD card ok")
+    prep = Preprocessor(args.mode, args.gfile)
 
-	prep.printStat();
+    try:
+        printer.sendGcode(prep.prep, "echo:SD card ok")
+    except SERIALDISCON:
+        print "Line disconnected in sendGcode(). Can't do a reset! Check your printer!"
+        sys.exit(1)
 
+
+    prep.printStat();
 
 
 

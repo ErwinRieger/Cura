@@ -48,9 +48,8 @@ class Um2UsbConnectionGroup(serialConnectionGroup):
 class Um2UsbConnection(printerConnectionBase):
 	"""
 	A serial connection. Needs to build an active-connection.
-	When an active connection is created, a 2nd python process is spawned which handles the actual serial communication.
-
-	This class communicates with the Cura.serialCommunication module trough stdin/stdout pipes.
+	This class acts as a Connector between cura and the ultiprint.py Printer
+	class.
 	"""
 	def __init__(self, port):
 
@@ -357,7 +356,7 @@ class Um2UsbConnection(printerConnectionBase):
 			# cpu cycles from wx to process the answer quickly
 			ev.RequestMore(True)
 
-		recvLine = self.saveReadline()		  
+		recvLine = self.safeReadline()		  
 
 		if not recvLine:
 			return
@@ -412,7 +411,7 @@ class Um2UsbConnection(printerConnectionBase):
 				return
 
 	# Read a response from printer, "handle" exceptions
-	def saveReadline(self):
+	def safeReadline(self):
 
 		result = ""
 
@@ -421,7 +420,7 @@ class Um2UsbConnection(printerConnectionBase):
 				c = self._serial.read()
 				# print "c: ", c
 			except serial.SerialException as ex:
-				print "saveReadline() Exception raised:", ex
+				print "safeReadline() Exception raised:", ex
 				break
 
 			if not c:
@@ -445,7 +444,7 @@ class Um2UsbConnection(printerConnectionBase):
 
 		for i in range(waitcount):
 
-			recvLine = self.saveReadline()		  
+			recvLine = self.safeReadline()		  
 
 			if recvLine:
 				if ord(recvLine[0]) > 20:

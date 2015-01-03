@@ -15,7 +15,7 @@ import ultiprint
 
 from Cura.util import profile
 from Cura.util.printerConnection.printerConnectionBase import printerConnectionBase
-from Cura.util.printerConnection.ultiprint import Preprocessor
+from Cura.util.printerConnection.ultiprint import Preprocessor, Printer
 from Cura.util.printerConnection.serialConnection import serialConnectionGroup
 
 def isPackedCommand(cmd):
@@ -45,7 +45,8 @@ class Um2UsbConnectionGroup(serialConnectionGroup):
 		"""
 		return True
 
-class Um2UsbConnection(printerConnectionBase):
+
+class Um2UsbConnection(printerConnectionBase, Printer):
 	"""
 	A serial connection. Needs to build an active-connection.
 	This class acts as a Connector between cura and the ultiprint.py Printer
@@ -54,14 +55,14 @@ class Um2UsbConnection(printerConnectionBase):
 	def __init__(self, port):
 
 		printerConnectionBase.__init__(self, "UM2 at " + port)
-
-		self._portName = port
+		Printer.__init__(self)
 
 		baud = profile.getMachineSetting('serial_baud')
 
 		# XXX AUTO is not allowed yet
 		assert(baud != "AUTO")
 
+		self._portName = port
 		self._baudrate = int(baud)
 
 		self._temperature = []
@@ -71,35 +72,16 @@ class Um2UsbConnection(printerConnectionBase):
 		self._log = []
 
 		self._commStateString = ""
-		self.gcodeData = []
-		self.gcodePos = 0
-
-		# Flag, print or store gcode
-		self.storeMode = False
-		self._serial = None
-		self.wantReply = None
-		self.wantAck = None
-		# Part of a response read from printer
-		self.recvPart = ""
-
-		self.endStoreToken = "Done saving"
-		self.endTokens = ['echo:enqueing "M84"']   
-
-		self.printing = False
-		self.startTime = None
 
 		self.dataStream = None
 
-		# Timespan where we monitor the serial line after the
-		# print has finished.
-		self.postMonitor = 0
-
 	def showMessage(self, s):
-		print s
+		print "showMessage: %s" % s
 		self._commStateString = s
 		self._doCallback()
 
 	def showError(self, s):
+
 		self._log.append(s)
 		self.showMessage(s)
 
@@ -117,7 +99,7 @@ class Um2UsbConnection(printerConnectionBase):
 
 		print "open serial: ", self._portName, self._baudrate
 		try:
-			self._serial = serial.Serial(self._portName, self._baudrate, timeout=0.05, writeTimeout=1)
+			self.initSerial(self._portName, br=self._baudrate)
 		except serial.SerialException as ex:
 			s = "Can't open serial port %s with baudrate %d: '%s'" % (self._portName, self._baudrate, str(ex))
 			print s
@@ -136,13 +118,13 @@ class Um2UsbConnection(printerConnectionBase):
 	def hasStoreMode(self):
 		return True
 
+	# Flag, print or store gcode
 	def setStoreMode(self, storeMode):
-		self.storeMode = storeMode
 
 		if storeMode:
-			self.endTokens = [self.endStoreToken, 'echo:enqueing "M84"']
+			self.initMode("store")
 		else:
-			self.endTokens = ['echo:enqueing "M84"']   
+			self.initMode("print")
 
 	def hasOnIdle(self):
 		"""
@@ -159,12 +141,8 @@ class Um2UsbConnection(printerConnectionBase):
 
 		self.showMessage("Preprocessing gcode.")
 
-		mode = "print"
-		if self.storeMode:
-			mode = "store"
-
 		self.dataStream.seekStart();
-		prep = Preprocessor(mode, stream = self.dataStream)
+		prep = Preprocessor(self.mode, stream = self.dataStream)
 
 		prep.printStat()
 
@@ -177,18 +155,15 @@ class Um2UsbConnection(printerConnectionBase):
 
 		self._printProgress = 0
 
-		if self.storeMode:
-			self.showMessage("Start store.")
-		else:
-			self.showMessage("Start print.")
-
+		self.showMessage("Start %s." % self.mode)
 
 	#Abort the previously loaded print file
-	def cancelPrint(self):
+	def cancelPrint(self, immediate=False):
 
 		self.printing = False
 
-		self.postMonitor = time.time() + 10
+		if not immediate:
+			self.postMonitor = time.time() + 10
 
 		if self.wantAck:
 			print "Clearing stale wantAck..."
@@ -198,7 +173,7 @@ class Um2UsbConnection(printerConnectionBase):
 			print "Clearing stale wantReply..."
 			self.wantReply = None
 
-		if self.storeMode:
+		if self.mode == "store":
 
 			self.showMessage("Close sd file.")
 
@@ -243,14 +218,12 @@ class Um2UsbConnection(printerConnectionBase):
 
 		print "closeActiveConnection"
 
-		if self.printing:
-			print "XXX stop printing here..."
-			assert(0)
+		self.postMonitor = 0
 
-		if self._serial:
-			self.postMonitor = 0
-			self._serial.close()
-			self._serial = None
+		if self.printing:
+			self.cancelPrint()
+
+		self.close()
 
 	#Is the active connection open right now.
 	def isActiveConnectionOpen(self):
@@ -330,191 +303,22 @@ class Um2UsbConnection(printerConnectionBase):
 		Called if gui is idle, to perform 'background tasks'
 		"""
 
-		if not self.printing and time.time() > self.postMonitor:
-			return
-
-		# if time.time() <  self.postMonitor: 
-			# print "postmon: ", self.wantAck, self.wantReply, self.gcodePos
-		
-		# if self.printing:
-			# print "print: ", self.wantAck, self.wantReply, self.gcodePos
-
-		if self.printing and not self.wantAck and not self.wantReply and self.gcodePos < len(self.gcodeData):
-			# send a line
-			(line, self.wantReply) = self.gcodeData[self.gcodePos]
-			self.send(line)
-			self.gcodePos += 1
-			self.lastSend = time.time()
-			self.wantAck = True
-
-			# Update gui
-			if (self.gcodePos % 250) == 0:
-				duration = time.time() - self.startTime
-				self.showMessage("Downloaded %d/%d gcodes, %.1f gcodes/sec" % (self.gcodePos, len(self.gcodeData), self.gcodePos/duration))
-
-			# We have sent a command to the printer, request more
-			# cpu cycles from wx to process the answer quickly
-			ev.RequestMore(True)
-
-		recvLine = self.safeReadline()		  
-
-		if not recvLine:
-			return
-
-		# There was something to read, so request more
-		# cpu cycles from wx
-		ev.RequestMore(True)
-
-		if self.recvPart:
-			recvLine = self.recvPart + recvLine
-			self.recvPart = None
-
-		if recvLine[-1] != "\n":
-			self.recvPart = recvLine
-			return
-
-		if self.checkError(recvLine):
-			# command resend
-			self.wantAck = False
-			self.wantReply = None
-			return
-
-		if self.wantAck and recvLine[0] == chr(0x6):
-			print "ACK"
-			self.wantAck = False
-			return
-
-		if self.wantReply and recvLine.startswith(self.wantReply):
-			print "Got Required reply: ", recvLine,
-			self.wantReply = None
-		else:
-			print "Reply: ", recvLine,
-
-		if recvLine.startswith(self.endStoreToken):
-
-			print "\n-----------------------------------------------"
-			print "Store statistics:"
-			print "-----------------------------------------------\n"
-			duration = time.time() - self.startTime
-			print "Sent %d commands in %.1f seconds, %.1f commands/second.\n" % (len(self.gcodeData), duration, len(self.gcodeData)/duration)
-			self.showMessage("GCode download done - Please wait for the print to finish.")
-
-		for token in self.endTokens:
-			if recvLine.startswith(token):
-
-				# self.readMore()
-				self.postMonitor = time.time() + 5
-
-				print "end-reply received, print/store done ..."
-				self.printing = False
-				self.showMessage("Print/Store finished.")
-				return
-
-	# Read a response from printer, "handle" exceptions
-	def safeReadline(self):
-
-		result = ""
-
-		while True:
-			try:
-				c = self._serial.read()
-				# print "c: ", c
-			except serial.SerialException as ex:
-				print "safeReadline() Exception raised:", ex
-				break
-
-			if not c:
-				break
-
-			result += c
-
-			if c == "\n":
-				break
-
-			if ord(c) == 0x6:
-				result += "\n"
-				break
-
-		return result
-
-	# Monitor printer responses for a while (wait waitcount * 0.1 seconds)
-	def readMore(self, waitcount=100):
-
-		print "waiting %.2f seconds for more messages..." % (waitcount/20.0)
-
-		for i in range(waitcount):
-
-			recvLine = self.safeReadline()		  
-
-			if recvLine:
-				if ord(recvLine[0]) > 20:
-					print "Reply: ", recvLine,
-				else:
-					print "Reply: 0x%s" % recvLine.encode("hex")
+		self.processCommand(ev)
 
 
-	# Send a command to the printer, add a newline if 
-	# needed.
-	def send(self, cmd):
 
-		if isPackedCommand(cmd):
-		
-			print "\nSend: ", cmd.encode("hex")
-			self._serial.write(cmd)
-		else:
 
-			print "\nSend: ", cmd,
-			self._serial.write(cmd)
 
-	# Check a printer response for an error
-	def checkError(self, recvLine):
 
-		if "Error:" in recvLine and	 "Last Line" in recvLine:
-			# Error:Line Number is not Last Line Number+1, Last Line: 9			   
-			# Error:checksum mismatch, Last Line: 71388
-			lastLine = int(recvLine.split(":")[2])
 
-			print "\nERROR:"
-			print "Reply: ", recvLine,
-			print "Scheduling resend of command...", lastLine+1
 
-			# assert(self.gcodePos == lastLine + 2)
 
-			self.gcodePos = lastLine + 1
 
-			# Slow down a bit in case of error
-			time.sleep(0.1)
-			return True
 
-		for token in ["Error:", "cold extrusion", "SD init fail", "open failed"]:
-			if token in recvLine:
 
-				self.printing = False
 
-				s = "ERROR: reply from printer: '%s'" % recvLine
-				self.showError(s)
 
-				self.reset()
 
-	# Stop and reset the printer
-	# xxx does not work right yet, um2 display still says 'preheating...'
-	def reset(self):
 
-		print "\nResetting printer"
-
-		# send("M29\n") # End sd write, response: "Done saving"
-		# send("G28\n") # Home all Axis, response: ok
-		# send("M84\n") # Disable steppers until next move, response: ok
-		# send("M104 S0\n") # Set temp
-		# send("M140 S0\n") # Set temp
-
-		gcode = ["M29", "G28", "M84", "M104 S0", "M140 S0"]
-		prep = Preprocessor("reset", gcode = map(lambda x: (x, None), gcode))
-
-		print "Reset code sequence: ", prep.prep
-
-		for (cmd, resp) in prep.prep:
-			self.send(cmd)
-			self.readMore(20)
 
 

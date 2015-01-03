@@ -78,7 +78,9 @@ class Um2UsbConnection(printerConnectionBase, Printer):
 	def showMessage(self, s):
 		print "showMessage: %s" % s
 		self._commStateString = s
-		self._doCallback()
+		# Pass string also to _doCallback, to skip "rate limiting" in 
+		# doPrinterConnectionUpdate()
+		self._doCallback(s)
 
 	def showError(self, s):
 
@@ -221,7 +223,7 @@ class Um2UsbConnection(printerConnectionBase, Printer):
 		self.postMonitor = 0
 
 		if self.printing:
-			self.cancelPrint()
+			self.cancelPrint(True)
 
 		self.close()
 

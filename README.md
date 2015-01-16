@@ -20,6 +20,13 @@ Please do NOT post any questions/bugs/issues to the maintainers of the original 
 
 The rest of this document is the original Readme from [Cura](https://github.com/daid/Cura).
 
+::
+
+  $LastChangedDate: 2015-01-05 00:16:08 +0100 (Mo, 05. Jan 2015) $
+  $Rev$
+
+-------------------------------
+
 Cura
 ====
 

@@ -16,14 +16,15 @@ XXX todo: create wiki page and link to it here...
 
 :Note:
 
-Please do NOT post any questions/bugs/issues to the maintainers of the original Cura software. Use the issue-tracker instead: [Issues](https://github.com/ErwinRieger/Cura-USBPrint/issues).
+Please do NOT post any questions/bugs/issues to the maintainers of the original Cura software. Use the issue-tracker instead: [Issues](https://github.com/ErwinRieger/Cura-USBPrint/issues) or send a email
+to er-ri@gmx.net.
 
 The rest of this document is the original Readme from [Cura](https://github.com/daid/Cura).
 
 ::
 
-  $LastChangedDate: 2015-01-05 00:16:08 +0100 (Mo, 05. Jan 2015) $
-  $Rev$
+  $LastChangedDate: 2015-01-23 01:27:14 +0100 (Fr, 23. Jan 2015) $
+  $Revision: 171 $
 
 -------------------------------
 

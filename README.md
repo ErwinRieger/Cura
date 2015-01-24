@@ -14,17 +14,16 @@ If you prefer a  commandline utility, then look here: [ultiprint.py](https://git
 
 XXX todo: create wiki page and link to it here...
 
-:Note:
+Note:
+-----
 
 Please do NOT post any questions/bugs/issues to the maintainers of the original Cura software. Use the issue-tracker instead: [Issues](https://github.com/ErwinRieger/Cura-USBPrint/issues) or send a email
 to er-ri@gmx.net.
 
 The rest of this document is the original Readme from [Cura](https://github.com/daid/Cura).
 
-::
-
-  $LastChangedDate: 2015-01-23 01:27:14 +0100 (Fr, 23. Jan 2015) $
-  $Revision: 171 $
+    $LastChangedDate: 2015-01-24 01:20:18 +0100 (Sa, 24. Jan 2015) $
+    $Revision: 179 $
 
 -------------------------------
 

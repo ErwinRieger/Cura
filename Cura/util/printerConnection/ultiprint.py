@@ -34,9 +34,9 @@
 #   G11: 4
 # 
 
-import sys, string, time, select, struct, argparse, collections
+import sys, time, struct, argparse, collections
 
-from serial import Serial, SerialException, PARITY_NONE, TERMIOS, TIOCMBIS, TIOCMBIC, TIOCM_RTS_str, TIOCM_DTR_str, TIOCM_DTR, TIOCM_RTS
+from serial import Serial, SerialException 
 
 # # This needs pyserial version >= 2.6:
 # try:
@@ -654,13 +654,13 @@ class Printer(Serial):
             print "\n-----------------------------------------------"
             print "Store statistics:"
             print "-----------------------------------------------\n"
-            self.storeDuration = time.time() - self.startTime
+            duration = time.time() - self.startTime
 
             if self.mode == "store":
-                self.showMessage("Sent %d gcodes in %.1f seconds, %.1f gcodes/sec." % (self.gcodePos, self.storeDuration, self.gcodePos/self.storeDuration))
+                self.showMessage("Sent %d gcodes in %.1f seconds, %.1f gcodes/sec." % (self.gcodePos, duration, self.gcodePos/duration))
                 self.printing = False
             else:
-                self.showMessage("Sent %d gcodes in %.1f seconds, %.1f gcodes/sec.\nPlease wait for the print to finish.\n" % (self.gcodePos, self.storeDuration, self.gcodePos/self.storeDuration))
+                self.showMessage("Sent %d gcodes in %.1f seconds, %.1f gcodes/sec.\nPlease wait for the print to finish.\n" % (self.gcodePos, duration, self.gcodePos/duration))
 
         else:
 
@@ -674,7 +674,7 @@ class Printer(Serial):
 
                     duration = time.time() - self.startTime
 
-                    self.showMessage("Print finished. Duration: %.1f seconds, Downloadspeed: %.1f gcodes/sec.\n" % (duration, self.gcodePos/self.storeDuration))
+                    self.showMessage("Print finished. Duration: %.1f seconds, Downloadspeed: %.1f gcodes/sec.\n" % (duration, self.gcodePos/duration))
 
         return True
 

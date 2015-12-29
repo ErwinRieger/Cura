@@ -1,3 +1,12 @@
+Note:
+-----
+
+This project is no longer maintained since the corresponding firmware is discontinued (see https://github.com/ErwinRieger/Ultimaker2Marlin-USBPrint/blob/master/README.md).
+I've switched to a entirely new (ultimaker) firmware with host side preprocessing: https://github.com/ErwinRieger/ddprint.
+
+
+-------------------------------
+
 About this fork
 ===========================
 
